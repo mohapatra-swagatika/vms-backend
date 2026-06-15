@@ -5,6 +5,26 @@ const { can } = require('../middleware/rbac');
 const { invalidateCache } = require('../services/permissions');
 const { getAssignableRoles } = require('../services/userScope');
 const { getAllPermissions } = require('../services/permissions');
+const { getPermissionCatalog } = require('../services/permissionCatalog');
+const { listRoles } = require('../services/roleList');
+
+// GET /roles/permissions — full catalog for role create/edit UI
+router.get('/permissions', auth, async (req, res) => {
+  try {
+    const perms = await getAllPermissions(req.user.id);
+    const allowed = perms.allowed;
+    const canList = ['role:read', 'role:create', 'role:update'].some(p => allowed.includes(p));
+    if (!canList) {
+      return res.status(403).json({ error: 'Missing permission to list available permissions' });
+    }
+
+    const permissions = await getPermissionCatalog();
+    res.json({ permissions });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load permissions' });
+  }
+});
 
 // GET /roles/assignable  — roles the requester may assign (strictly below own level)
 router.get('/assignable', auth, async (req, res) => {
@@ -26,20 +46,13 @@ router.get('/assignable', auth, async (req, res) => {
   }
 });
 
-// GET /roles  — includes user_count per role
+// GET /roles  — includes user_count per role, with search/filter/pagination
 router.get('/', auth, can('role:read'), async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT r.*,
-        COUNT(ura.id)::int AS user_count
-      FROM roles r
-      LEFT JOIN user_role_assignments ura ON ura.role_id = r.id
-        AND (ura.expires_at IS NULL OR ura.expires_at > now())
-      GROUP BY r.id
-      ORDER BY r.level DESC
-    `);
-    res.json({ roles: rows });
+    const result = await listRoles(req.query);
+    res.json(result);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch roles' });
   }
 });

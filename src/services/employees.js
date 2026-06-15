@@ -77,6 +77,26 @@ async function buildVisibilityClause(userId, startIdx = 1) {
   return { clause: 'FALSE', params: [], nextIdx: startIdx };
 }
 
+/** Filter employees by exact entity type (and optional specific entity). No child union. */
+function buildEntityFilterClause(entityType, entityId, startIdx = 1) {
+  const idx = startIdx;
+  return {
+    clause: `e.entity_type = $${idx} AND e.entity_id = $${idx + 1}`,
+    params: [entityType, entityId],
+    nextIdx: idx + 2,
+  };
+}
+
+/** Type-only filter — all employees of that entity type, no child entities included. */
+function buildEntityTypeFilterClause(entityType, startIdx = 1) {
+  const idx = startIdx;
+  return {
+    clause: `e.entity_type = $${idx}`,
+    params: [entityType],
+    nextIdx: idx + 1,
+  };
+}
+
 async function assertEntityExists(entityType, entityId) {
   const table = ENTITY_TABLES[entityType];
   if (!table) throw Object.assign(new Error('Invalid entity type'), { status: 400 });
@@ -132,13 +152,15 @@ async function listEmployees(userId, query = {}) {
     if (entityId) {
       const allowed = await canAccessEntity(userId, entityType, entityId);
       if (!allowed) throw Object.assign(new Error('You do not have access to this entity'), { status: 403 });
-      conditions.push(`e.entity_type = $${idx} AND e.entity_id = $${idx + 1}`);
-      params.push(entityType, entityId);
-      idx += 2;
+      const filter = buildEntityFilterClause(entityType, entityId, idx);
+      conditions.push(filter.clause);
+      params.push(...filter.params);
+      idx = filter.nextIdx;
     } else {
-      conditions.push(`e.entity_type = $${idx}`);
-      params.push(entityType);
-      idx += 1;
+      const filter = buildEntityTypeFilterClause(entityType, idx);
+      conditions.push(filter.clause);
+      params.push(...filter.params);
+      idx = filter.nextIdx;
     }
   }
 

@@ -5,7 +5,13 @@ const { canUploadEntityImage } = require('../middleware/entityImage');
 const { canUploadEmployeeCsv } = require('../middleware/employee');
 const { uploadEntityImage, uploadEmployeeCsv } = require('../middleware/upload');
 const { CSV_TEMPLATE, importEmployeesFromCsv } = require('../services/employeeCsv');
-const { latestImageSql, listEntityImages, insertEntityImages } = require('../services/entityImages');
+const {
+  latestImageSql,
+  getEntityGallery,
+  insertEntityImages,
+  resolveImageRow,
+  resolveImageRows,
+} = require('../services/entityImages');
 const { getUserTopScope, isGlobalScope } = require('../services/userScope');
 const { canAccessEntity } = require('../services/entityAccess');
 const { can } = require('../middleware/rbac');
@@ -114,7 +120,7 @@ router.get('/towers', async (req, res) => {
       ${where}
       ORDER BY t.created_at DESC
     `, params);
-    res.json({ towers: rows });
+    res.json({ towers: await resolveImageRows(rows) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load towers' });
@@ -132,7 +138,10 @@ router.get('/towers/:id', async (req, res) => {
     const { rows: companies } = await pool.query(
       'SELECT * FROM companies WHERE tower_id = $1 ORDER BY created_at DESC', [req.params.id]
     );
-    res.json({ tower, companies });
+    res.json({
+      tower: await resolveImageRow(tower),
+      companies: await resolveImageRows(companies),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load tower' });
@@ -153,7 +162,7 @@ router.post('/towers', async (req, res) => {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [name, address || null, image_url || null, req.user.id]
     );
-    res.status(201).json({ tower: rows[0] });
+    res.status(201).json({ tower: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create tower' });
@@ -193,7 +202,7 @@ router.patch('/towers/:id', async (req, res) => {
        req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Tower not found' });
-    res.json({ tower: rows[0] });
+    res.json({ tower: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update tower' });
@@ -254,7 +263,7 @@ router.get('/companies', async (req, res) => {
        FROM companies c LEFT JOIN towers t ON t.id = c.tower_id
        ${where} ORDER BY c.created_at DESC`, params
     );
-    res.json({ companies: rows });
+    res.json({ companies: await resolveImageRows(rows) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load companies' });
@@ -287,7 +296,7 @@ router.post('/companies', async (req, res) => {
        notify_channels ? JSON.stringify(notify_channels) : null,
        req.user.id]
     );
-    res.status(201).json({ company: rows[0] });
+    res.status(201).json({ company: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create company' });
@@ -329,7 +338,8 @@ router.patch('/companies/:id', async (req, res) => {
        req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Company not found' });
-    res.json({ company: { ...rows[0], config: normalizeEntityConfig(rows[0].notify_channels) } });
+    const company = await resolveImageRow(rows[0]);
+    res.json({ company: { ...company, config: normalizeEntityConfig(rows[0].notify_channels) } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update company' });
@@ -378,7 +388,7 @@ router.get('/organizations', async (req, res) => {
       ${where}
       ORDER BY o.created_at DESC
     `, params);
-    res.json({ organizations: rows });
+    res.json({ organizations: await resolveImageRows(rows) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load organizations' });
@@ -395,7 +405,10 @@ router.get('/organizations/:id', async (req, res) => {
     const { rows: locations } = await pool.query(
       'SELECT * FROM locations WHERE organization_id = $1 ORDER BY created_at DESC', [req.params.id]
     );
-    res.json({ organization: org, locations });
+    res.json({
+      organization: await resolveImageRow(org),
+      locations: await resolveImageRows(locations),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load organization' });
@@ -416,7 +429,7 @@ router.post('/organizations', async (req, res) => {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [name, address || null, image_url || null, req.user.id]
     );
-    res.status(201).json({ organization: rows[0] });
+    res.status(201).json({ organization: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create organization' });
@@ -455,7 +468,7 @@ router.patch('/organizations/:id', async (req, res) => {
        req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Organization not found' });
-    res.json({ organization: rows[0] });
+    res.json({ organization: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update organization' });
@@ -516,7 +529,7 @@ router.get('/locations', async (req, res) => {
        FROM locations l LEFT JOIN organizations o ON o.id = l.organization_id
        ${where} ORDER BY l.created_at DESC`, params
     );
-    res.json({ locations: rows });
+    res.json({ locations: await resolveImageRows(rows) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load locations' });
@@ -549,7 +562,7 @@ router.post('/locations', async (req, res) => {
        notify_channels ? JSON.stringify(notify_channels) : null,
        req.user.id]
     );
-    res.status(201).json({ location: rows[0] });
+    res.status(201).json({ location: await resolveImageRow(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create location' });
@@ -590,7 +603,8 @@ router.patch('/locations/:id', async (req, res) => {
        req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Location not found' });
-    res.json({ location: { ...rows[0], config: normalizeEntityConfig(rows[0].notify_channels) } });
+    const location = await resolveImageRow(rows[0]);
+    res.json({ location: { ...location, config: normalizeEntityConfig(rows[0].notify_channels) } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update location' });
@@ -616,8 +630,8 @@ function entityImagesListHandler(entityType) {
     try {
       if (!await canAccessEntity(req.user.id, entityType, req.params.id))
         return res.status(403).json({ error: 'Access denied' });
-      const images = await listEntityImages(entityType, req.params.id);
-      res.json({ images });
+      const gallery = await getEntityGallery(entityType, req.params.id);
+      res.json(gallery);
     } catch (err) {
       console.error(err);
       if (err.code === '42P01') {

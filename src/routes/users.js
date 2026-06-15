@@ -8,108 +8,15 @@ const { uploadProfileImage } = require('../middleware/upload');
 const { invalidateCache } = require('../services/permissions');
 const { canAssignRoleLevel } = require('../services/userScope');
 const { deleteProfileImages } = require('../services/profileImages');
-const { uploadBuffer, profileKey } = require('../services/storage');
+const { uploadBuffer, resolveProfile, resolveImageUrl, profileKey } = require('../services/storage');
+const { optimizeImage } = require('../services/imageOptimize');
+const { listUsers } = require('../services/userList');
 
-// GET /users  — scope-filtered: only returns users visible to the requester
+// GET /users  — scope-filtered list with search, filters, pagination
 router.get('/', auth, can('user:read'), async (req, res) => {
   try {
-    // ── Step 1: Find the requester's most powerful active role assignment ──
-    const { rows: myRoles } = await pool.query(`
-      SELECT ura.scope_type, ura.scope_id, r.level, r.entity_type
-      FROM   user_role_assignments ura
-      JOIN   roles r ON r.id = ura.role_id
-      WHERE  ura.user_id = $1
-        AND  (ura.expires_at IS NULL OR ura.expires_at > now())
-      ORDER  BY r.level DESC
-      LIMIT  1
-    `, [req.user.id]);
-
-    const top = myRoles[0];
-
-    // ── Step 2: Determine which user IDs are visible ──────────────────────
-    // Support (≥1000) or global-scoped role → see everyone
-    const isGlobal = !top || top.level >= 1000 || top.scope_type === 'global';
-
-    let allowedIds = null; // null = no restriction
-
-    if (!isGlobal && !top.scope_id) {
-      // Scoped role but no scope_id set — incomplete assignment; show only themselves
-      allowedIds = [req.user.id];
-    } else if (!isGlobal && top.scope_id) {
-      let visibleRows;
-
-      if (top.scope_type === 'tower') {
-        // Tower admin: users assigned to this tower OR any of its companies
-        ({ rows: visibleRows } = await pool.query(`
-          SELECT DISTINCT ura.user_id
-          FROM   user_role_assignments ura
-          WHERE  (ura.scope_type = 'tower'   AND ura.scope_id = $1)
-             OR  (ura.scope_type = 'company' AND ura.scope_id IN (
-                   SELECT id FROM companies WHERE tower_id = $1
-                 ))
-        `, [top.scope_id]));
-
-      } else if (top.scope_type === 'organization') {
-        // Org admin: users assigned to this org OR any of its locations
-        ({ rows: visibleRows } = await pool.query(`
-          SELECT DISTINCT ura.user_id
-          FROM   user_role_assignments ura
-          WHERE  (ura.scope_type = 'organization' AND ura.scope_id = $1)
-             OR  (ura.scope_type = 'location'     AND ura.scope_id IN (
-                   SELECT id FROM locations WHERE organization_id = $1
-                 ))
-        `, [top.scope_id]));
-
-      } else if (top.scope_type === 'company') {
-        // Company admin: users assigned to this specific company
-        ({ rows: visibleRows } = await pool.query(`
-          SELECT DISTINCT ura.user_id
-          FROM   user_role_assignments ura
-          WHERE  ura.scope_type = 'company' AND ura.scope_id = $1
-        `, [top.scope_id]));
-
-      } else if (top.scope_type === 'location') {
-        // Location admin: users assigned to this specific location
-        ({ rows: visibleRows } = await pool.query(`
-          SELECT DISTINCT ura.user_id
-          FROM   user_role_assignments ura
-          WHERE  ura.scope_type = 'location' AND ura.scope_id = $1
-        `, [top.scope_id]));
-
-      } else {
-        // 'any' entity_type (e.g. admin role not bound to specific entity) → no filter
-        visibleRows = null;
-      }
-
-      if (visibleRows) {
-        allowedIds = visibleRows.map(r => r.user_id);
-        // Always include the requesting user themselves
-        if (!allowedIds.includes(req.user.id)) allowedIds.push(req.user.id);
-      }
-    }
-
-    // ── Step 3: Fetch users with optional ID filter ───────────────────────
-    const hasFilter = !isGlobal && allowedIds !== null;
-
-    const { rows } = await pool.query(`
-      SELECT u.id, u.email, u.name, u.phone, u.is_active, u.created_at, u.profile_image_url,
-             COALESCE(json_agg(
-               json_build_object(
-                 'role_name', r.name, 'display_name', r.display_name,
-                 'level', r.level, 'scope_type', ura.scope_type,
-                 'scope_id', ura.scope_id, 'expires_at', ura.expires_at
-               )
-             ) FILTER (WHERE r.id IS NOT NULL), '[]') AS roles
-      FROM   users u
-      LEFT   JOIN user_role_assignments ura ON ura.user_id = u.id
-        AND  (ura.expires_at IS NULL OR ura.expires_at > now())
-      LEFT   JOIN roles r ON r.id = ura.role_id
-      ${hasFilter ? 'WHERE u.id = ANY($1::uuid[])' : ''}
-      GROUP  BY u.id
-      ORDER  BY u.created_at DESC
-    `, hasFilter ? [allowedIds] : []);
-
-    res.json({ users: rows });
+    const result = await listUsers(req.user.id, req.query);
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -124,7 +31,7 @@ router.get('/:id', auth, can('user:read'), async (req, res) => {
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(rows[0]);
+    res.json(await resolveProfile(rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch user' });
   }
@@ -145,20 +52,22 @@ router.post('/:id/profile-image', auth, canUploadProfileImage, clearOldProfileIm
   try {
     if (!req.file?.buffer) return res.status(400).json({ error: 'No image file provided' });
 
-    const key = profileKey(req.params.id, req.file.originalname);
-    const imageUrl = await uploadBuffer({
-      key,
-      buffer:      req.file.buffer,
-      contentType: req.file.mimetype,
-    });
+    const { buffer, contentType, ext } = await optimizeImage(req.file.buffer, req.file.mimetype);
+    const key = profileKey(req.params.id, `upload${ext}`);
+    const storageRef = await uploadBuffer({ key, buffer, contentType });
     const { rows } = await pool.query(
       `UPDATE users SET profile_image_url = $1, updated_at = now()
        WHERE id = $2
        RETURNING id, email, name, phone, is_active, created_at, profile_image_url`,
-      [imageUrl, req.params.id]
+      [storageRef, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json({ user: rows[0], profile_image_url: imageUrl });
+    await pool.query(
+      'INSERT INTO user_images (user_id, image_url) VALUES ($1, $2)',
+      [req.params.id, storageRef]
+    );
+    const signedUrl = await resolveImageUrl(storageRef);
+    res.json({ user: await resolveProfile(rows[0]), profile_image_url: signedUrl });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to upload profile image' });
