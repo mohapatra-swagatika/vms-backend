@@ -7,7 +7,12 @@ const { LOCAL_ROOT, DRIVER, validateS3Config } = require('./services/storage');
 
 const app = express();
 
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+app.use(cors({
+  origin: process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+    : true,
+  credentials: true,
+}));
 app.use(express.json());
 app.use('/media', require('./routes/media'));
 

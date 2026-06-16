@@ -15,6 +15,9 @@ const { deleteProfileImages } = require('../services/profileImages');
 const { uploadBuffer, resolveProfile, resolveImageUrl, profileKey } = require('../services/storage');
 const { optimizeImage } = require('../services/imageOptimize');
 const { listUsers } = require('../services/userList');
+const mobileAuth = require('../middleware/mobileAuth');
+const { getUserGallery } = require('../services/userImages');
+const { getDashboardGalleryForUser } = require('../services/entityImages');
 
 const USER_PUBLIC_FIELDS = {
   id: true,
@@ -34,6 +37,32 @@ router.get('/', auth, can('user:read'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// GET /users/me — logged-in mobile user details
+router.get('/me', mobileAuth, async (req, res) => {
+  try {
+    const gallery = await getUserGallery(req.user.id);
+    if (!gallery) return res.status(404).json({ error: 'User not found' });
+    res.json(gallery.user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// GET /users/me/images — entity gallery for the user's scoped entity (same as admin dashboard)
+router.get('/me/images', mobileAuth, async (req, res) => {
+  try {
+    const gallery = await getDashboardGalleryForUser(req.user.id);
+    res.json(gallery);
+  } catch (err) {
+    console.error(err);
+    if (err.code === '42P01') {
+      return res.status(500).json({ error: 'Image storage not ready. Run database migrations.' });
+    }
+    res.status(500).json({ error: 'Failed to load entity images' });
   }
 });
 

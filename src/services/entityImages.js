@@ -1,6 +1,16 @@
 const { repo, repoByEntityType } = require('../db');
+const { getUserTopScope } = require('../db/queries/assignments');
 const { uploadBuffer, entityKey, resolveImageRows, resolveImageUrl, resolveImageRow } = require('./storage');
 const { optimizeImage } = require('./imageOptimize');
+const { isGlobalScope } = require('./userScope');
+
+const SCOPED_ENTITY_TYPES = new Set(['tower', 'company', 'organization', 'location']);
+
+function getScopedEntity(top) {
+  if (!top?.scope_id || isGlobalScope(top)) return null;
+  if (!SCOPED_ENTITY_TYPES.has(top.scope_type)) return null;
+  return { type: top.scope_type, id: top.scope_id };
+}
 
 async function listEntityImages(entityType, entityId) {
   const rows = await repo('EntityImage').find({
@@ -49,9 +59,28 @@ async function insertEntityImages(entityType, entityId, files, uploadedBy) {
   return signedUrls;
 }
 
+async function getDashboardGalleryForUser(userId) {
+  const top = await getUserTopScope(userId);
+  const scoped = getScopedEntity(top);
+
+  if (!scoped) {
+    return { entity_type: null, entity_id: null, entity_name: null, images: [] };
+  }
+
+  const gallery = await getEntityGallery(scoped.type, scoped.id);
+  return {
+    entity_type: scoped.type,
+    entity_id: scoped.id,
+    entity_name: gallery.entity_name,
+    images: gallery.images,
+  };
+}
+
 module.exports = {
   listEntityImages,
   getEntityGallery,
+  getDashboardGalleryForUser,
+  getScopedEntity,
   insertEntityImages,
   resolveImageRow,
   resolveImageRows,
