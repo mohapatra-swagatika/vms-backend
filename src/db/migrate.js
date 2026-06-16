@@ -1,9 +1,12 @@
 require('dotenv').config();
+require('reflect-metadata');
 const fs   = require('fs');
 const path = require('path');
-const pool = require('./pool');
+const { initializeDb, query } = require('./index');
 
 async function migrate() {
+  await initializeDb();
+
   const migrationsDir = path.join(__dirname, 'migrations');
   const files = fs.readdirSync(migrationsDir).sort();
 
@@ -11,7 +14,7 @@ async function migrate() {
     if (!file.endsWith('.sql')) continue;
     console.log(`Running migration: ${file}`);
     const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-    await pool.query(sql);
+    await query(sql);
     console.log(`  ✅ Done`);
   }
 

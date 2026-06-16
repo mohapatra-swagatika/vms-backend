@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const bcrypt = require('bcrypt');
-const pool   = require('../db/pool');
+const { repo, isUniqueViolation } = require('../db');
+const {
+  findActiveAssignments,
+  formatAssignmentRow,
+} = require('../db/queries/assignments');
 const auth   = require('../middleware/auth');
 const { can } = require('../middleware/rbac');
 const { canUploadProfileImage } = require('../middleware/profileImage');
@@ -11,6 +15,16 @@ const { deleteProfileImages } = require('../services/profileImages');
 const { uploadBuffer, resolveProfile, resolveImageUrl, profileKey } = require('../services/storage');
 const { optimizeImage } = require('../services/imageOptimize');
 const { listUsers } = require('../services/userList');
+
+const USER_PUBLIC_FIELDS = {
+  id: true,
+  email: true,
+  name: true,
+  phone: true,
+  is_active: true,
+  created_at: true,
+  profile_image_url: true,
+};
 
 // GET /users  — scope-filtered list with search, filters, pagination
 router.get('/', auth, can('user:read'), async (req, res) => {
@@ -26,12 +40,12 @@ router.get('/', auth, can('user:read'), async (req, res) => {
 // GET /users/:id
 router.get('/:id', auth, can('user:read'), async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT id, email, name, phone, is_active, created_at, profile_image_url FROM users WHERE id = $1',
-      [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(await resolveProfile(rows[0]));
+    const user = await repo('User').findOne({
+      where: { id: req.params.id },
+      select: USER_PUBLIC_FIELDS,
+    });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(await resolveProfile(user));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch user' });
   }
@@ -52,22 +66,25 @@ router.post('/:id/profile-image', auth, canUploadProfileImage, clearOldProfileIm
   try {
     if (!req.file?.buffer) return res.status(400).json({ error: 'No image file provided' });
 
+    const userRepo = repo('User');
     const { buffer, contentType, ext } = await optimizeImage(req.file.buffer, req.file.mimetype);
     const key = profileKey(req.params.id, `upload${ext}`);
     const storageRef = await uploadBuffer({ key, buffer, contentType });
-    const { rows } = await pool.query(
-      `UPDATE users SET profile_image_url = $1, updated_at = now()
-       WHERE id = $2
-       RETURNING id, email, name, phone, is_active, created_at, profile_image_url`,
-      [storageRef, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    await pool.query(
-      'INSERT INTO user_images (user_id, image_url) VALUES ($1, $2)',
-      [req.params.id, storageRef]
-    );
+
+    await userRepo.update(req.params.id, { profile_image_url: storageRef });
+    const user = await userRepo.findOne({
+      where: { id: req.params.id },
+      select: USER_PUBLIC_FIELDS,
+    });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    await repo('UserImage').save({
+      user_id: req.params.id,
+      image_url: storageRef,
+    });
+
     const signedUrl = await resolveImageUrl(storageRef);
-    res.json({ user: await resolveProfile(rows[0]), profile_image_url: signedUrl });
+    res.json({ user: await resolveProfile(user), profile_image_url: signedUrl });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to upload profile image' });
@@ -82,32 +99,45 @@ router.post('/', auth, can('user:create'), async (req, res) => {
       return res.status(400).json({ error: 'email, password, name required' });
 
     const hash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS));
-    const { rows } = await pool.query(
-      `INSERT INTO users (email, password_hash, name, phone)
-       VALUES ($1, $2, $3, $4) RETURNING id, email, name, phone, created_at`,
-      [email.toLowerCase(), hash, name, phone || null]
-    );
-    const user = rows[0];
+    const userRepo = repo('User');
+    const user = userRepo.create({
+      email: email.toLowerCase(),
+      password_hash: hash,
+      name,
+      phone: phone || null,
+    });
+    const saved = await userRepo.save(user);
 
-    // Assign role if provided
     if (role_name && scope_type) {
-      const { rows: roleRows } = await pool.query(
-        'SELECT id, level FROM roles WHERE name = $1', [role_name]
-      );
-      if (!roleRows[0]) return res.status(400).json({ error: 'Role not found' });
-      if (!(await canAssignRoleLevel(req.user.id, roleRows[0].level))) {
+      const role = await repo('Role').findOne({
+        where: { name: role_name },
+        select: { id: true, level: true },
+      });
+      if (!role) return res.status(400).json({ error: 'Role not found' });
+      if (!(await canAssignRoleLevel(req.user.id, role.level))) {
         return res.status(403).json({ error: 'You cannot assign a role at or above your own level' });
       }
-      await pool.query(
-        `INSERT INTO user_role_assignments (user_id, role_id, scope_type, scope_id, assigned_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [user.id, roleRows[0].id, scope_type, scope_id || null, req.user.id]
-      );
+      await repo('UserRoleAssignment').save({
+        user_id: saved.id,
+        role_id: role.id,
+        scope_type,
+        scope_id: scope_id || null,
+        assigned_by: req.user.id,
+      });
     }
 
-    res.status(201).json({ user });
+    const { password_hash, ...publicUser } = saved;
+    res.status(201).json({
+      user: {
+        id: publicUser.id,
+        email: publicUser.email,
+        name: publicUser.name,
+        phone: publicUser.phone,
+        created_at: publicUser.created_at,
+      },
+    });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Email already exists' });
+    if (isUniqueViolation(err)) return res.status(409).json({ error: 'Email already exists' });
     console.error(err);
     res.status(500).json({ error: 'Failed to create user' });
   }
@@ -116,27 +146,29 @@ router.post('/', auth, can('user:create'), async (req, res) => {
 // PATCH /users/:id
 router.patch('/:id', auth, can('user:update'), async (req, res) => {
   try {
-    // Block self-deactivation
     if (req.params.id === req.user.id && req.body.is_active === false)
       return res.status(403).json({ error: 'You cannot deactivate your own account.' });
 
     const { name, phone, email, is_active } = req.body;
-    const { rows } = await pool.query(
-      `UPDATE users SET
-         name      = COALESCE($1, name),
-         phone     = COALESCE($2, phone),
-         email     = COALESCE($3, email),
-         is_active = COALESCE($4, is_active),
-         updated_at = now()
-       WHERE id = $5
-       RETURNING id, email, name, phone, is_active`,
-      [name, phone, email ? email.toLowerCase() : null, is_active, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+    const userRepo = repo('User');
+    const existing = await userRepo.findOne({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'User not found' });
+
+    await userRepo.update(req.params.id, {
+      ...(name != null && { name }),
+      ...(phone != null && { phone }),
+      ...(email != null && { email: email.toLowerCase() }),
+      ...(is_active != null && { is_active }),
+    });
+
+    const updated = await userRepo.findOne({
+      where: { id: req.params.id },
+      select: { id: true, email: true, name: true, phone: true, is_active: true },
+    });
     await invalidateCache(req.params.id);
-    res.json(rows[0]);
+    res.json(updated);
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
+    if (isUniqueViolation(err)) return res.status(409).json({ error: 'Email already in use' });
     console.error(err);
     res.status(500).json({ error: 'Failed to update user' });
   }
@@ -146,7 +178,6 @@ router.patch('/:id', auth, can('user:update'), async (req, res) => {
 router.post('/:id/reset-password', auth, can('user:update'), async (req, res) => {
   try {
     let { password } = req.body;
-    // If no password provided, generate one
     if (!password) {
       password = 'Vms-' + Math.random().toString(36).slice(2, 10) + '!';
     }
@@ -154,13 +185,15 @@ router.post('/:id/reset-password', auth, can('user:update'), async (req, res) =>
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
     const hash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS));
-    const { rows } = await pool.query(
-      `UPDATE users SET password_hash = $1, updated_at = now()
-       WHERE id = $2 RETURNING id, email, name`,
-      [hash, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json({ user: rows[0], password });
+    const userRepo = repo('User');
+    const existing = await userRepo.findOne({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'User not found' });
+
+    await userRepo.update(req.params.id, { password_hash: hash });
+    res.json({
+      user: { id: existing.id, email: existing.email, name: existing.name },
+      password,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to reset password' });
@@ -173,7 +206,8 @@ router.delete('/:id', auth, can('user:delete'), async (req, res) => {
     if (req.params.id === req.user.id)
       return res.status(403).json({ error: 'You cannot delete your own account.' });
 
-    await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    const result = await repo('User').delete(req.params.id);
+    if (!result.affected) return res.status(404).json({ error: 'User not found' });
     await invalidateCache(req.params.id);
     res.json({ message: 'User deleted' });
   } catch (err) {
@@ -184,15 +218,11 @@ router.delete('/:id', auth, can('user:delete'), async (req, res) => {
 // GET /users/:id/roles
 router.get('/:id/roles', auth, can('role:read'), async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT ura.id, ura.scope_type, ura.scope_id, ura.assigned_at, ura.expires_at,
-             r.name as role_name, r.display_name, r.level, r.is_system
-      FROM   user_role_assignments ura
-      JOIN   roles r ON r.id = ura.role_id
-      WHERE  ura.user_id = $1
-      ORDER  BY r.level DESC
-    `, [req.params.id]);
-    res.json({ assignments: rows });
+    const assignments = (await findActiveAssignments(req.params.id, {
+      orderByLevel: true,
+      activeOnly: false,
+    })).map(formatAssignmentRow);
+    res.json({ assignments });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch roles' });
   }
@@ -205,22 +235,29 @@ router.post('/:id/roles', auth, can('role:assign'), async (req, res) => {
     if (!role_id || !scope_type)
       return res.status(400).json({ error: 'role_id and scope_type required' });
 
-    const { rows: roleRows } = await pool.query('SELECT level FROM roles WHERE id = $1', [role_id]);
-    if (!roleRows[0]) return res.status(404).json({ error: 'Role not found' });
-    if (!(await canAssignRoleLevel(req.user.id, roleRows[0].level))) {
+    const role = await repo('Role').findOne({
+      where: { id: role_id },
+      select: { id: true, level: true },
+    });
+    if (!role) return res.status(404).json({ error: 'Role not found' });
+    if (!(await canAssignRoleLevel(req.user.id, role.level))) {
       return res.status(403).json({ error: 'You cannot assign a role at or above your own level' });
     }
 
-    const { rows } = await pool.query(
-      `INSERT INTO user_role_assignments (user_id, role_id, scope_type, scope_id, assigned_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [req.params.id, role_id, scope_type, scope_id || null, req.user.id, expires_at || null]
-    );
+    const assignmentRepo = repo('UserRoleAssignment');
+    const assignment = assignmentRepo.create({
+      user_id: req.params.id,
+      role_id,
+      scope_type,
+      scope_id: scope_id || null,
+      assigned_by: req.user.id,
+      expires_at: expires_at || null,
+    });
+    const saved = await assignmentRepo.save(assignment);
     await invalidateCache(req.params.id);
-    res.status(201).json(rows[0]);
+    res.status(201).json(saved);
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Assignment already exists' });
+    if (isUniqueViolation(err)) return res.status(409).json({ error: 'Assignment already exists' });
     res.status(500).json({ error: 'Failed to assign role' });
   }
 });
@@ -228,7 +265,7 @@ router.post('/:id/roles', auth, can('role:assign'), async (req, res) => {
 // DELETE /users/:id/roles/:assignmentId
 router.delete('/:id/roles/:assignmentId', auth, can('role:assign'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM user_role_assignments WHERE id = $1', [req.params.assignmentId]);
+    await repo('UserRoleAssignment').delete(req.params.assignmentId);
     await invalidateCache(req.params.id);
     res.json({ message: 'Role removed' });
   } catch (err) {

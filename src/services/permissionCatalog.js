@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const { repo } = require('../db');
 
 /** Canonical permission strings used across the VMS API. */
 const PERMISSION_CATALOG = [
@@ -54,16 +54,15 @@ const PERMISSION_CATALOG = [
 
 /** Union of catalog + any permissions already stored on roles (custom roles). */
 async function getPermissionCatalog() {
-  const { rows } = await pool.query(`
-    SELECT DISTINCT perm FROM (
-      SELECT jsonb_array_elements_text(permissions->'actions') AS perm FROM roles
-      UNION ALL
-      SELECT jsonb_array_elements_text(permissions->'not_actions') AS perm FROM roles
-    ) x
-    WHERE perm IS NOT NULL AND perm <> ''
-  `);
+  const roles = await repo('Role').find({ select: { permissions: true } });
+  const all = new Set(PERMISSION_CATALOG);
 
-  const all = new Set([...PERMISSION_CATALOG, ...rows.map(r => r.perm)]);
+  for (const role of roles) {
+    const { actions = [], not_actions = [] } = role.permissions || {};
+    actions.forEach((perm) => all.add(perm));
+    not_actions.forEach((perm) => all.add(perm));
+  }
+
   return [...all].sort();
 }
 

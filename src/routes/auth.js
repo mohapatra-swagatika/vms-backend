@@ -1,7 +1,11 @@
 const router  = require('express').Router();
 const bcrypt  = require('bcrypt');
 const jwt     = require('jsonwebtoken');
-const pool    = require('../db/pool');
+const { repo } = require('../db');
+const {
+  findActiveAssignments,
+  formatAssignmentRow,
+} = require('../db/queries/assignments');
 const { getEffectivePermissions, getAllPermissions } = require('../services/permissions');
 const { getMaxAssignmentLevel, MIN_ADMIN_PORTAL_LEVEL } = require('../services/userScope');
 
@@ -12,10 +16,9 @@ router.post('/login', async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ error: 'Email and password required' });
 
-    const { rows } = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true', [email.toLowerCase()]
-    );
-    const user = rows[0];
+    const user = await repo('User').findOne({
+      where: { email: email.toLowerCase(), is_active: true },
+    });
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -25,15 +28,7 @@ router.post('/login', async (req, res) => {
     const accessToken  = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN });
     const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN });
 
-    // Load assignments + permissions
-    const { rows: assignments } = await pool.query(`
-      SELECT ura.id, ura.scope_type, ura.scope_id, ura.expires_at,
-             r.name as role_name, r.display_name, r.level
-      FROM   user_role_assignments ura
-      JOIN   roles r ON r.id = ura.role_id
-      WHERE  ura.user_id = $1
-        AND  (ura.expires_at IS NULL OR ura.expires_at > now())
-    `, [user.id]);
+    const assignments = (await findActiveAssignments(user.id)).map(formatAssignmentRow);
 
     const maxLevel = await getMaxAssignmentLevel(user.id);
     if (maxLevel < MIN_ADMIN_PORTAL_LEVEL) {

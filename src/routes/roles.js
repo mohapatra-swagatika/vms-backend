@@ -1,5 +1,6 @@
 const router = require('express').Router();
-const pool   = require('../db/pool');
+const { repo, isUniqueViolation } = require('../db');
+const { countActiveAssignmentsForRole } = require('../db/queries/assignments');
 const auth   = require('../middleware/auth');
 const { can } = require('../middleware/rbac');
 const { invalidateCache } = require('../services/permissions');
@@ -60,9 +61,9 @@ router.get('/', auth, can('role:read'), async (req, res) => {
 // GET /roles/:id
 router.get('/:id', auth, can('role:read'), async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM roles WHERE id = $1', [req.params.id]);
-    if (!rows[0]) return res.status(404).json({ error: 'Role not found' });
-    res.json(rows[0]);
+    const role = await repo('Role').findOne({ where: { id: req.params.id } });
+    if (!role) return res.status(404).json({ error: 'Role not found' });
+    res.json(role);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch role' });
   }
@@ -75,15 +76,21 @@ router.post('/', auth, can('role:create'), async (req, res) => {
     if (!name || !display_name || !level || !permissions)
       return res.status(400).json({ error: 'name, display_name, level, permissions required' });
 
-    const { rows } = await pool.query(
-      `INSERT INTO roles (name, display_name, level, permissions, parent_role_id, entity_type, entity_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [name, display_name, level, JSON.stringify(permissions),
-       parent_role_id || null, entity_type || 'any', entity_id || null, req.user.id]
-    );
-    res.status(201).json(rows[0]);
+    const roleRepo = repo('Role');
+    const role = roleRepo.create({
+      name,
+      display_name,
+      level,
+      permissions,
+      parent_role_id: parent_role_id || null,
+      entity_type: entity_type || 'any',
+      entity_id: entity_id || null,
+      created_by: req.user.id,
+    });
+    const saved = await roleRepo.save(role);
+    res.status(201).json(saved);
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Role name already exists' });
+    if (isUniqueViolation(err)) return res.status(409).json({ error: 'Role name already exists' });
     res.status(500).json({ error: 'Failed to create role' });
   }
 });
@@ -91,19 +98,23 @@ router.post('/', auth, can('role:create'), async (req, res) => {
 // PUT /roles/:id
 router.put('/:id', auth, can('role:update'), async (req, res) => {
   try {
-    const { rows: existing } = await pool.query('SELECT is_system FROM roles WHERE id = $1', [req.params.id]);
-    if (!existing[0]) return res.status(404).json({ error: 'Role not found' });
-    if (existing[0].is_system) return res.status(403).json({ error: 'System roles cannot be modified' });
+    const roleRepo = repo('Role');
+    const existing = await roleRepo.findOne({
+      where: { id: req.params.id },
+      select: { id: true, is_system: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Role not found' });
+    if (existing.is_system) return res.status(403).json({ error: 'System roles cannot be modified' });
 
     const { display_name, level, permissions, parent_role_id } = req.body;
-    const { rows } = await pool.query(
-      `UPDATE roles SET display_name = COALESCE($1, display_name),
-         level = COALESCE($2, level), permissions = COALESCE($3, permissions),
-         parent_role_id = COALESCE($4, parent_role_id), updated_at = now()
-       WHERE id = $5 RETURNING *`,
-      [display_name, level, permissions ? JSON.stringify(permissions) : null, parent_role_id, req.params.id]
-    );
-    res.json(rows[0]);
+    await roleRepo.update(req.params.id, {
+      ...(display_name != null && { display_name }),
+      ...(level != null && { level }),
+      ...(permissions != null && { permissions }),
+      ...(parent_role_id != null && { parent_role_id }),
+    });
+    const updated = await roleRepo.findOne({ where: { id: req.params.id } });
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update role' });
   }
@@ -112,25 +123,23 @@ router.put('/:id', auth, can('role:update'), async (req, res) => {
 // DELETE /roles/:id
 router.delete('/:id', auth, can('role:delete'), async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT is_system FROM roles WHERE id = $1', [req.params.id]);
-    if (!rows[0]) return res.status(404).json({ error: 'Role not found' });
-    if (rows[0].is_system) return res.status(403).json({ error: 'System roles cannot be deleted' });
+    const roleRepo = repo('Role');
+    const existing = await roleRepo.findOne({
+      where: { id: req.params.id },
+      select: { id: true, is_system: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Role not found' });
+    if (existing.is_system) return res.status(403).json({ error: 'System roles cannot be deleted' });
 
-    // Block delete if active users have this role
-    const { rows: usageRows } = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM user_role_assignments
-       WHERE role_id = $1 AND (expires_at IS NULL OR expires_at > now())`,
-      [req.params.id]
-    );
-    if (usageRows[0].cnt > 0)
+    const usageCount = await countActiveAssignmentsForRole(req.params.id);
+    if (usageCount > 0)
       return res.status(409).json({
-        error: `Cannot delete: ${usageRows[0].cnt} user(s) still have this role assigned. Remove those assignments first.`,
-        user_count: usageRows[0].cnt,
+        error: `Cannot delete: ${usageCount} user(s) still have this role assigned. Remove those assignments first.`,
+        user_count: usageCount,
       });
 
-    await pool.query('DELETE FROM roles WHERE id = $1', [req.params.id]);
+    await roleRepo.delete(req.params.id);
 
-    // Invalidate all permission caches (safest — role is gone)
     const { redis } = require('../services/permissions');
     const keys = await redis.keys('perm:*');
     if (keys.length) await redis.del(...keys);

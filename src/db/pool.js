@@ -1,10 +1,32 @@
-require('dotenv').config();
-const { Pool } = require('pg');
+/**
+ * @deprecated Use `require('./index')` — repo(), query(), or initializeDb().
+ * Kept for scripts that still import pool; delegates to TypeORM.
+ */
+const {
+  AppDataSource,
+  initializeDb,
+  poolQuery,
+} = require('./index');
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+async function ensureReady() {
+  if (!AppDataSource.isInitialized) await initializeDb();
+}
 
-pool.on('error', (err) => {
-  console.error('Unexpected DB error:', err.message);
-});
-
-module.exports = pool;
+module.exports = {
+  query: async (text, params) => {
+    await ensureReady();
+    return poolQuery(text, params);
+  },
+  connect: async () => {
+    await ensureReady();
+    const runner = AppDataSource.createQueryRunner();
+    await runner.connect();
+    return {
+      query: async (text, params) => {
+        const rows = await runner.query(text, params);
+        return { rows };
+      },
+      release: () => runner.release(),
+    };
+  },
+};

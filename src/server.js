@@ -1,6 +1,8 @@
 require('dotenv').config();
+require('reflect-metadata');
 const express = require('express');
 const cors    = require('cors');
+const { initializeDb } = require('./db');
 const { LOCAL_ROOT, DRIVER, validateS3Config } = require('./services/storage');
 
 const app = express();
@@ -11,6 +13,9 @@ app.use('/media', require('./routes/media'));
 
 async function start() {
   try {
+    await initializeDb();
+    console.log('Database connected (TypeORM)');
+
     if (DRIVER === 'local') {
       console.log(`Object storage: local (${LOCAL_ROOT})`);
     } else {
