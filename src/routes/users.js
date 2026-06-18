@@ -17,7 +17,10 @@ const { optimizeImage } = require('../services/imageOptimize');
 const { listUsers } = require('../services/userList');
 const mobileAuth = require('../middleware/mobileAuth');
 const { getUserGallery } = require('../services/userImages');
-const { getDashboardGalleryForUser } = require('../services/entityImages');
+const {
+  getDashboardGalleryForUser,
+  getDashboardConfigForUser,
+} = require('../services/mobileDashboard');
 
 const USER_PUBLIC_FIELDS = {
   id: true,
@@ -52,7 +55,7 @@ router.get('/me', mobileAuth, async (req, res) => {
   }
 });
 
-// GET /users/me/images — entity gallery for the user's scoped entity (same as admin dashboard)
+// GET /users/me/images — entity gallery (falls back to parent scope when needed)
 router.get('/me/images', mobileAuth, async (req, res) => {
   try {
     const gallery = await getDashboardGalleryForUser(req.user.id);
@@ -63,6 +66,17 @@ router.get('/me/images', mobileAuth, async (req, res) => {
       return res.status(500).json({ error: 'Image storage not ready. Run database migrations.' });
     }
     res.status(500).json({ error: 'Failed to load entity images' });
+  }
+});
+
+// GET /users/me/config — config for the user's scoped entity
+router.get('/me/config', mobileAuth, async (req, res) => {
+  try {
+    const payload = await getDashboardConfigForUser(req.user.id);
+    res.json(payload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load configuration' });
   }
 });
 

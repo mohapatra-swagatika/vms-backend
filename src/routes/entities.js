@@ -27,6 +27,7 @@ const {
   sanitizeEntityConfig,
 } = require('../services/entityConfig');
 const { getNotificationRecipients } = require('../services/notificationRecipients');
+const { TABLE_BY_TYPE, getParentEntity } = require('../services/entityHierarchy');
 
 const CONFIG_ENTITY = {
   towers:         { table: 'towers',         entityType: 'tower' },
@@ -34,6 +35,29 @@ const CONFIG_ENTITY = {
   companies:      { table: 'companies',      entityType: 'company' },
   locations:      { table: 'locations',      entityType: 'location' },
 };
+
+async function loadParentConfigPayload(entityType, entityId) {
+  const parentRef = await getParentEntity(entityType, entityId);
+  if (!parentRef) return null;
+
+  const parentTable = TABLE_BY_TYPE[parentRef.type];
+  if (!parentTable) return null;
+
+  const row = await repoByTable(parentTable).findOne({
+    where: { id: parentRef.id },
+    select: { id: true, name: true, notify_channels: true },
+  });
+  if (!row) return null;
+
+  const recipients = await getNotificationRecipients(parentRef.type, parentRef.id);
+  return {
+    entity_type: parentRef.type,
+    entity_id: parentRef.id,
+    entity_name: row.name,
+    config: sanitizeEntityConfig(row.notify_channels, recipients),
+    recipients,
+  };
+}
 
 async function buildConfigPayload(entityType, table, entityId) {
   const row = await repoByTable(table).findOne({
@@ -45,6 +69,7 @@ async function buildConfigPayload(entityType, table, entityId) {
   return {
     config: sanitizeEntityConfig(row.notify_channels, recipients),
     recipients,
+    parent: await loadParentConfigPayload(entityType, entityId),
   };
 }
 
