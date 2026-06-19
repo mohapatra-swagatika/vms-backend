@@ -108,7 +108,7 @@ async function clearDatabase() {
       `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'visitors'`
     )).rowCount > 0;
     const visitors = hasVisitors
-      ? (await client.query('UPDATE visitors SET image_url = NULL WHERE image_url IS NOT NULL')).rowCount
+      ? (await client.query('UPDATE visitors SET photo_url = NULL WHERE photo_url IS NOT NULL')).rowCount
       : 0;
     await client.query('COMMIT');
     console.log('DB: cleared user_images (%d), entity_images (%d)', userImages, entityImages);

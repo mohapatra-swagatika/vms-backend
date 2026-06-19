@@ -1,3 +1,4 @@
+
 -- Gallery image delete permissions (self and child) for entity-scoped system roles.
 
 UPDATE roles r
