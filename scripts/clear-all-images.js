@@ -16,7 +16,7 @@ const {
 
 const LOCAL_ROOT = process.env.STORAGE_LOCAL_PATH || path.join(os.homedir(), '.vms-storage');
 const S3_BUCKET = process.env.S3_BUCKET;
-const S3_PREFIXES = ['profiles/', 'entities/'];
+const S3_PREFIXES = ['profiles/', 'entities/', 'visitors/'];
 
 function rmDirContents(dir) {
   if (!fs.existsSync(dir)) return 0;
@@ -92,6 +92,23 @@ async function clearS3() {
   return total;
 }
 
+async function tableExists(client, tableName) {
+  const res = await client.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
+    [tableName],
+  );
+  return res.rowCount > 0;
+}
+
+async function columnExists(client, tableName, columnName) {
+  const res = await client.query(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+    [tableName, columnName],
+  );
+  return res.rowCount > 0;
+}
+
 async function clearDatabase() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const client = await pool.connect();
@@ -104,12 +121,14 @@ async function clearDatabase() {
     const companies = (await client.query('UPDATE companies SET image_url = NULL WHERE image_url IS NOT NULL')).rowCount;
     const orgs = (await client.query('UPDATE organizations SET image_url = NULL WHERE image_url IS NOT NULL')).rowCount;
     const locations = (await client.query('UPDATE locations SET image_url = NULL WHERE image_url IS NOT NULL')).rowCount;
-    const hasVisitors = (await client.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'visitors'`
-    )).rowCount > 0;
-    const visitors = hasVisitors
+    const hasVisitors = await tableExists(client, 'visitors');
+    const hasVisitorPhoto = hasVisitors && await columnExists(client, 'visitors', 'photo_url');
+    const visitors = hasVisitorPhoto
       ? (await client.query('UPDATE visitors SET photo_url = NULL WHERE photo_url IS NOT NULL')).rowCount
       : 0;
+    if (hasVisitors && !hasVisitorPhoto) {
+      console.log('DB: visitors table has no photo_url column — skipped (run migration 014_visitor_photo.sql if needed)');
+    }
     await client.query('COMMIT');
     console.log('DB: cleared user_images (%d), entity_images (%d)', userImages, entityImages);
     console.log('DB: nulled profile/entity URLs — users %d, towers %d, companies %d, orgs %d, locations %d, visitors %d',
