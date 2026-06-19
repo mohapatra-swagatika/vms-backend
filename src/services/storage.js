@@ -93,6 +93,10 @@ function profileKey(userId, originalname) {
   return `profiles/${userId}${extFromName(originalname)}`;
 }
 
+function entityProfileKey(entityType, entityId, originalname) {
+  return `entities/${entityType}/${entityId}/profile${extFromName(originalname)}`;
+}
+
 function entityKey(entityType, entityId, originalname) {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return `entities/${entityType}/${entityId}/${uid}${extFromName(originalname)}`;
@@ -275,6 +279,7 @@ module.exports = {
   resolveProfile,
   resolveProfiles,
   profileKey,
+  entityProfileKey,
   entityKey,
   keyFromStorageRef,
   keyFromUrl,

@@ -2,7 +2,6 @@ const { repo } = require('../db');
 const { getUserTopScope } = require('../db/queries/assignments');
 const { isGlobalScope } = require('./userScope');
 const {
-  attachLatestImages,
   getCompanyCountsByTower,
   getLocationCountsByOrganization,
 } = require('../db/queries/entityMeta');
@@ -20,10 +19,9 @@ async function listTowers(userId) {
   }
 
   const towers = await qb.getMany();
-  const withImages = await attachLatestImages('tower', towers);
-  const counts = await getCompanyCountsByTower(withImages.map((t) => t.id));
+  const counts = await getCompanyCountsByTower(towers.map((t) => t.id));
 
-  return withImages.map((tower) => ({
+  return towers.map((tower) => ({
     ...tower,
     company_count: counts[tower.id] ?? 0,
   }));
@@ -42,10 +40,9 @@ async function listOrganizations(userId) {
   }
 
   const organizations = await qb.getMany();
-  const withImages = await attachLatestImages('organization', organizations);
-  const counts = await getLocationCountsByOrganization(withImages.map((o) => o.id));
+  const counts = await getLocationCountsByOrganization(organizations.map((o) => o.id));
 
-  return withImages.map((org) => ({
+  return organizations.map((org) => ({
     ...org,
     location_count: counts[org.id] ?? 0,
   }));
@@ -77,7 +74,7 @@ async function listCompanies(userId, { towerId } = {}) {
     tower_name: raw[index]?.t_name ?? null,
   }));
 
-  return attachLatestImages('company', rows);
+  return rows;
 }
 
 async function listLocations(userId, { organizationId } = {}) {
@@ -106,7 +103,7 @@ async function listLocations(userId, { organizationId } = {}) {
     organization_name: raw[index]?.o_name ?? null,
   }));
 
-  return attachLatestImages('location', rows);
+  return rows;
 }
 
 module.exports = {

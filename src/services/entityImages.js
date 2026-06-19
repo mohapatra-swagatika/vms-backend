@@ -1,5 +1,5 @@
 const { repo, repoByEntityType } = require('../db');
-const { uploadBuffer, entityKey, resolveImageRows, resolveImageUrl, resolveImageRow } = require('./storage');
+const { uploadBuffer, entityKey, deleteObject, resolveImageRows, resolveImageUrl, resolveImageRow } = require('./storage');
 const { optimizeImage } = require('./imageOptimize');
 const { isGlobalScope } = require('./userScope');
 
@@ -31,12 +31,10 @@ async function getEntityGallery(entityType, entityId) {
   return { entity_name: entity?.name ?? null, images };
 }
 
-/** Upload files to storage; store keys/URLs in DB; return client-facing URLs. */
+/** Upload files to gallery storage; append rows in entity_images only. */
 async function insertEntityImages(entityType, entityId, files, uploadedBy) {
   const imageRepo = repo('EntityImage');
-  const entityRepo = repoByEntityType(entityType);
   const signedUrls = [];
-  let latestRef = null;
 
   for (const file of files) {
     const { buffer, contentType, ext } = await optimizeImage(file.buffer, file.mimetype);
@@ -48,14 +46,23 @@ async function insertEntityImages(entityType, entityId, files, uploadedBy) {
       image_url: storageRef,
       uploaded_by: uploadedBy,
     });
-    latestRef = storageRef;
     signedUrls.push(await resolveImageUrl(storageRef));
   }
 
-  if (latestRef) {
-    await entityRepo.update(entityId, { image_url: latestRef });
-  }
   return signedUrls;
+}
+
+async function deleteEntityGalleryImage(entityType, entityId, imageId) {
+  const imageRepo = repo('EntityImage');
+  const row = await imageRepo.findOne({
+    where: { id: imageId, entity_type: entityType, entity_id: entityId },
+    select: { id: true, image_url: true },
+  });
+  if (!row) return null;
+
+  await deleteObject(row.image_url);
+  await imageRepo.delete(row.id);
+  return { id: row.id };
 }
 
 module.exports = {
@@ -63,6 +70,7 @@ module.exports = {
   getEntityGallery,
   getScopedEntity,
   insertEntityImages,
+  deleteEntityGalleryImage,
   resolveImageRow,
   resolveImageRows,
 };

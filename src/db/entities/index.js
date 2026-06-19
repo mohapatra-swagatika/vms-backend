@@ -180,6 +180,7 @@ const Visitor = new EntitySchema({
     entity_type: { type: 'varchar', length: 20 },
     entity_id: { type: 'uuid' },
     full_name: { type: 'varchar', length: 255 },
+    image_url: { type: 'varchar', length: 500, nullable: true },
     email: { type: 'varchar', length: 255, nullable: true },
     phone: { type: 'varchar', length: 30, nullable: true },
     company_name: { type: 'varchar', length: 255, nullable: true },

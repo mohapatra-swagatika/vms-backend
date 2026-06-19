@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS visitors (
   host_employee_id    UUID REFERENCES employees(id) ON DELETE SET NULL,
 
   status              VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN (
-    'pending', 'approved', 'checked_in', 'checked_out', 'cancelled', 'rejected'
+    'pending', 'approved', 'rejected'
   )),
 
   scheduled_arrival   TIMESTAMPTZ,
