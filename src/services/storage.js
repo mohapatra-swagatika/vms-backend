@@ -93,6 +93,11 @@ function profileKey(userId, originalname) {
   return `profiles/${userId}${extFromName(originalname)}`;
 }
 
+function visitorPhotoKey(visitorId, originalname) {
+  const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `visitors/${visitorId}/${uid}${extFromName(originalname)}`;
+}
+
 function entityKey(entityType, entityId, originalname) {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return `entities/${entityType}/${entityId}/${uid}${extFromName(originalname)}`;
@@ -105,7 +110,7 @@ function keyFromStorageRef(ref) {
   if (value.startsWith('/uploads/')) {
     return value.replace(/^\/uploads\//, '');
   }
-  if (value.startsWith('profiles/') || value.startsWith('entities/')) {
+  if (value.startsWith('profiles/') || value.startsWith('entities/') || value.startsWith('visitors/')) {
     return value;
   }
   if (!value.startsWith('http://') && !value.startsWith('https://') && !value.startsWith('/')) {
@@ -125,7 +130,7 @@ function keyFromStorageRef(ref) {
       }
     }
     const objectPath = decodeURIComponent(u.pathname.replace(/^\//, ''));
-    if (objectPath.startsWith('profiles/') || objectPath.startsWith('entities/')) return objectPath;
+    if (objectPath.startsWith('profiles/') || objectPath.startsWith('entities/') || objectPath.startsWith('visitors/')) return objectPath;
     return objectPath || null;
   } catch {
     return null;
@@ -275,6 +280,7 @@ module.exports = {
   resolveProfile,
   resolveProfiles,
   profileKey,
+  visitorPhotoKey,
   entityKey,
   keyFromStorageRef,
   keyFromUrl,

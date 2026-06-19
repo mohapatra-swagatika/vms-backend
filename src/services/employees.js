@@ -4,7 +4,7 @@ const {
   isGlobalScope,
 } = require('./userScope');
 const {
-  applyScopeVisibilityToEmployeeQb,
+  applyScopeVisibilityToScopedEntityQb,
   resolveEntityNames,
 } = require('../db/queries/assignments');
 const { canAccessEntity } = require('./entityAccess');
@@ -25,7 +25,7 @@ function employeeQb() {
 async function applyEmployeeVisibility(qb, userId) {
   const scope = await getUserTopScope(userId);
   if (isGlobalScope(scope)) return qb;
-  return applyScopeVisibilityToEmployeeQb(qb, scope);
+  return applyScopeVisibilityToScopedEntityQb(qb, scope);
 }
 
 async function assertEntityExists(entityType, entityId) {

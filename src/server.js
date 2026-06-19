@@ -38,6 +38,7 @@ async function start() {
   app.use('/roles', require('./routes/roles'));
   app.use('/entities', require('./routes/entities'));
   app.use('/employees', require('./routes/employees'));
+  app.use('/visitors', require('./routes/visitors'));
 
   // Health check
   app.get('/health', (_, res) => res.json({

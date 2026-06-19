@@ -69,10 +69,15 @@ function uploadEmployeeCsv(req, res, next) {
   csvMulter.single('csv')(req, res, (err) => handleCsvMulterError(err, res, next));
 }
 
+function uploadVisitorPhoto(req, res, next) {
+  imageMulter.single('picture')(req, res, (err) => handleMulterError(err, res, next));
+}
+
 module.exports = {
   uploadProfileImage,
   uploadEntityImage,
   uploadEmployeeCsv,
+  uploadVisitorPhoto,
   MAX_IMAGE_BYTES: MAX_BYTES,
   MAX_IMAGE_FILES: MAX_FILES,
   MAX_CSV_BYTES,

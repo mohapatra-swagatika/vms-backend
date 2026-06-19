@@ -177,7 +177,7 @@ async function countActiveAssignmentsForRole(roleId) {
     .getCount();
 }
 
-function applyScopeVisibilityToEmployeeQb(qb, scope, alias = 'e') {
+function applyScopeVisibilityToScopedEntityQb(qb, scope, alias = 'e') {
   if (!scope?.scope_id) {
     qb.andWhere('1 = 0');
     return qb;
@@ -273,6 +273,7 @@ module.exports = {
   fetchScopedPermissions,
   fetchAllActivePermissions,
   countActiveAssignmentsForRole,
-  applyScopeVisibilityToEmployeeQb,
+  applyScopeVisibilityToScopedEntityQb,
+  applyScopeVisibilityToEmployeeQb: applyScopeVisibilityToScopedEntityQb,
   resolveEntityNames,
 };

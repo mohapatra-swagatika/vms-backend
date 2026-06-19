@@ -172,6 +172,31 @@ const Employee = new EntitySchema({
   },
 });
 
+const Visitor = new EntitySchema({
+  name: 'Visitor',
+  tableName: 'visitors',
+  columns: {
+    id: { type: 'uuid', primary: true, generated: 'uuid' },
+    entity_type: { type: 'varchar', length: 20 },
+    entity_id: { type: 'uuid' },
+    name: { type: 'varchar', length: 255 },
+    email: { type: 'varchar', length: 255, nullable: true },
+    phone: { type: 'varchar', length: 30, nullable: true },
+    purpose: { type: 'varchar', length: 100, nullable: true },
+    host_name: { type: 'varchar', length: 255, nullable: true },
+    host_email: { type: 'varchar', length: 255, nullable: true },
+    organization: { type: 'varchar', length: 255, nullable: true },
+    department: { type: 'varchar', length: 100, nullable: true },
+    status: { type: 'varchar', length: 30, default: 'pending' },
+    check_in_at: { type: 'timestamptz', nullable: true },
+    check_out_at: { type: 'timestamptz', nullable: true },
+    photo_url: { type: 'varchar', length: 1024, nullable: true },
+    created_by: { type: 'uuid', nullable: true },
+    created_at: { type: 'timestamptz', createDate: true },
+    updated_at: { type: 'timestamptz', updateDate: true },
+  },
+});
+
 const EntityImage = new EntitySchema({
   name: 'EntityImage',
   tableName: 'entity_images',
@@ -209,6 +234,7 @@ module.exports = {
   Company,
   Location,
   Employee,
+  Visitor,
   EntityImage,
   TABLE_TO_ENTITY,
   ENTITY_TYPE_TO_REPO,
@@ -222,6 +248,7 @@ module.exports = {
     Company,
     Location,
     Employee,
+    Visitor,
     EntityImage,
   ],
 };
