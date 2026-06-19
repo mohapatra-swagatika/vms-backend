@@ -2,8 +2,8 @@ const { getAllPermissions } = require('../services/permissions');
 const { getUserTopScope } = require('../services/userScope');
 const { canAccessEntity } = require('../services/entityAccess');
 
-/** Requires image:upload_self (own entity) or image:upload_child (managed entity). */
-function canUploadEntityImage(entityType) {
+/** Requires image:delete_upload_self (own entity) or image:delete_upload_child (managed entity). */
+function canDeleteEntityImage(entityType) {
   return async (req, res, next) => {
     try {
       req.entityType = entityType;
@@ -15,14 +15,14 @@ function canUploadEntityImage(entityType) {
       const isSelf = scope?.scope_type === entityType && String(scope.scope_id) === entityId;
 
       if (isSelf) {
-        if (!allowed.includes('image:upload_self')) {
-          return res.status(403).json({ error: 'Missing permission: image:upload_self' });
+        if (!allowed.includes('image:delete_upload_self')) {
+          return res.status(403).json({ error: 'Missing permission: image:delete_upload_self' });
         }
         return next();
       }
 
-      if (!allowed.includes('image:upload_child')) {
-        return res.status(403).json({ error: 'Missing permission: image:upload_child' });
+      if (!allowed.includes('image:delete_upload_child')) {
+        return res.status(403).json({ error: 'Missing permission: image:delete_upload_child' });
       }
       if (!(await canAccessEntity(req.user.id, entityType, entityId))) {
         return res.status(403).json({ error: 'You do not have access to manage this entity' });
@@ -35,4 +35,4 @@ function canUploadEntityImage(entityType) {
   };
 }
 
-module.exports = { canUploadEntityImage };
+module.exports = { canDeleteEntityImage };

@@ -14,6 +14,8 @@ const PERMISSION_CATALOG = [
   'entity:delete',
   'entity:read',
   'entity:update',
+  'image:delete_upload_child',
+  'image:delete_upload_self',
   'image:upload_child',
   'image:upload_self',
   'notification:configure',

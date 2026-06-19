@@ -98,6 +98,10 @@ function visitorPhotoKey(visitorId, originalname) {
   return `visitors/${visitorId}/${uid}${extFromName(originalname)}`;
 }
 
+function entityProfileKey(entityType, entityId, originalname) {
+  return `entities/${entityType}/${entityId}/profile${extFromName(originalname)}`;
+}
+
 function entityKey(entityType, entityId, originalname) {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return `entities/${entityType}/${entityId}/${uid}${extFromName(originalname)}`;
@@ -281,6 +285,7 @@ module.exports = {
   resolveProfiles,
   profileKey,
   visitorPhotoKey,
+  entityProfileKey,
   entityKey,
   keyFromStorageRef,
   keyFromUrl,

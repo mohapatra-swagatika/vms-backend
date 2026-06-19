@@ -2,15 +2,22 @@ const router = require('express').Router();
 const { repo, repoByTable } = require('../db');
 const auth   = require('../middleware/auth');
 const { canUploadEntityImage } = require('../middleware/entityImage');
+const { canDeleteEntityImage } = require('../middleware/entityImageDelete');
+const { canUploadEntityProfileImage } = require('../middleware/entityProfileImage');
 const { canUploadEmployeeCsv } = require('../middleware/employee');
-const { uploadEntityImage, uploadEmployeeCsv } = require('../middleware/upload');
+const { uploadEntityImage, uploadEmployeeCsv, uploadProfileImage } = require('../middleware/upload');
 const { CSV_TEMPLATE, importEmployeesFromCsv } = require('../services/employeeCsv');
 const {
   getEntityGallery,
   insertEntityImages,
+  deleteEntityGalleryImage,
   resolveImageRow,
   resolveImageRows,
 } = require('../services/entityImages');
+const {
+  deleteEntityProfileImage,
+  uploadEntityProfileImage,
+} = require('../services/entityProfileImages');
 const {
   listTowers,
   listOrganizations,
@@ -542,7 +549,7 @@ router.get('/companies/:id/images',      entityImagesListHandler('company'));
 router.get('/organizations/:id/images', entityImagesListHandler('organization'));
 router.get('/locations/:id/images',      entityImagesListHandler('location'));
 
-// ── Entity image uploads (image:upload_child) — append only; never replace prior uploads ───
+// ── Entity gallery uploads (image:upload_child) — append only; gallery rows only ───
 function entityImageHandler(entityType, table, responseKey) {
   return async (req, res) => {
     try {
@@ -556,14 +563,12 @@ function entityImageHandler(entityType, table, responseKey) {
       if (!existing) return res.status(404).json({ error: 'Entity not found' });
 
       const imageUrls = await insertEntityImages(entityType, req.params.id, files, req.user.id);
-      const latestUrl = imageUrls[imageUrls.length - 1];
 
       const total = await repo('EntityImage').count({
         where: { entity_type: entityType, entity_id: req.params.id },
       });
 
       res.json({
-        image_url: latestUrl,
         image_urls: imageUrls,
         uploaded_count: imageUrls.length,
         total_images: total,
@@ -586,6 +591,80 @@ entityImageRoute('/towers/:id/image',         'tower',        'towers',         
 entityImageRoute('/companies/:id/image',      'company',      'companies',      'company');
 entityImageRoute('/organizations/:id/image', 'organization', 'organizations', 'organization');
 entityImageRoute('/locations/:id/image',      'location',     'locations',      'location');
+
+function entityImageDeleteHandler(entityType) {
+  return async (req, res) => {
+    try {
+      const result = await deleteEntityGalleryImage(
+        entityType,
+        req.params.id,
+        req.params.imageId,
+      );
+      if (!result) return res.status(404).json({ error: 'Image not found' });
+      res.json({ message: 'Image deleted', id: result.id });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || 'Failed to delete image' });
+    }
+  };
+}
+
+function entityImageDeleteRoute(path, entityType) {
+  router.delete(path, canDeleteEntityImage(entityType), entityImageDeleteHandler(entityType));
+}
+
+entityImageDeleteRoute('/towers/:id/images/:imageId',         'tower');
+entityImageDeleteRoute('/companies/:id/images/:imageId',      'company');
+entityImageDeleteRoute('/organizations/:id/images/:imageId', 'organization');
+entityImageDeleteRoute('/locations/:id/images/:imageId',      'location');
+
+// ── Entity profile image (single avatar on entity list; does not touch gallery) ──
+function clearOldEntityProfileImage(entityType) {
+  return async (req, _res, next) => {
+    try {
+      await deleteEntityProfileImage(entityType, req.params.id);
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+function entityProfileImageHandler(entityType, table) {
+  return async (req, res) => {
+    try {
+      if (!req.file?.buffer) return res.status(400).json({ error: 'No image file provided' });
+
+      const existing = await repoByTable(table).findOne({
+        where: { id: req.params.id },
+        select: { id: true },
+      });
+      if (!existing) return res.status(404).json({ error: 'Entity not found' });
+
+      const result = await uploadEntityProfileImage(entityType, req.params.id, req.file);
+      if (!result) return res.status(404).json({ error: 'Entity not found' });
+      res.json(result);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || 'Failed to upload profile image' });
+    }
+  };
+}
+
+function entityProfileImageRoute(path, entityType, table) {
+  router.post(
+    path,
+    canUploadEntityProfileImage(entityType),
+    clearOldEntityProfileImage(entityType),
+    uploadProfileImage,
+    entityProfileImageHandler(entityType, table),
+  );
+}
+
+entityProfileImageRoute('/towers/:id/profile-image',         'tower',        'towers');
+entityProfileImageRoute('/companies/:id/profile-image',      'company',      'companies');
+entityProfileImageRoute('/organizations/:id/profile-image', 'organization', 'organizations');
+entityProfileImageRoute('/locations/:id/profile-image',      'location',     'locations');
 
 // ── Employee CSV import ────────────────────────────────────────────────────────
 router.get('/employees/csv-template', (_req, res) => {
